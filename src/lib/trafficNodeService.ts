@@ -6,6 +6,7 @@ export interface TrafficNode {
   severity: 'red' | 'yellow';
   radius: number;
   id: string;
+  video: string;
 }
 
 export interface RoadGeometry {
@@ -13,13 +14,70 @@ export interface RoadGeometry {
   lengthMeters: number;
 }
 
+export interface TrafficSegment {
+  id: string;
+  coordinates: [number, number][];
+  severity: 'green' | 'yellow' | 'red';
+  speedRatio: number;
+  currentSpeed: number;
+  freeFlowSpeed: number;
+}
+
+interface TrafficIncident {
+  id?: string;
+  lat: number;
+  lng: number;
+  severity: string;
+}
+
+interface TomTomIncident {
+  id?: string;
+  type: string;
+  geometry: {
+    type: string;
+    coordinates: [number, number]; // [lng, lat]
+  };
+  properties: {
+    iconCategory: number;
+    magnitudeOfDelay: number;
+    events: Array<{
+      description: string;
+      code: string;
+      iconCategory: number;
+    }>;
+  };
+}
+
+interface TomTomFlowSegment {
+  coordinates: {
+    coordinate: [number, number][]; // Array of [lng, lat] coordinates
+  };
+  currentSpeed: number;
+  freeFlowSpeed: number;
+}
+
 class TrafficNodeService {
   private static instance: TrafficNodeService;
   private currentNodes: TrafficNode[] = [];
   private roadGeometries: RoadGeometry[] = [];
-  private listeners: Array<(nodes: TrafficNode[]) => void> = [];
+  private listeners: Array<(nodes: TrafficNode[], segments?: TrafficSegment[]) => void> = [];
   private refreshInterval: NodeJS.Timeout | null = null;
-  
+  private useLiveData: boolean = false;
+  private apiKey: string = '7iz930EexJTwLGnkJU130ArjvQWxOuyt';
+
+  private videos = [
+    '/videos/V1.mp4',
+    '/videos/V2.mp4',
+    '/videos/V3.mp4',
+    '/videos/V4.mp4',
+    '/videos/V5.mp4',
+    '/videos/V6.mp4',
+    '/videos/V7.mp4',
+    '/videos/V8.mp4',
+  ];
+
+  private trafficSegments: TrafficSegment[] = [];
+
   get isAutoRefreshActive(): boolean {
     return this.refreshInterval !== null;
   }
@@ -32,11 +90,11 @@ class TrafficNodeService {
   }
 
   // Subscribe to node updates
-  subscribe(callback: (nodes: TrafficNode[]) => void): () => void {
+  subscribe(callback: (nodes: TrafficNode[], segments?: TrafficSegment[]) => void): () => void {
     this.listeners.push(callback);
-    // Immediately call with current nodes
-    callback(this.currentNodes);
-    
+    // Immediately call with current nodes and segments
+    callback(this.currentNodes, this.trafficSegments);
+
     return () => {
       const index = this.listeners.indexOf(callback);
       if (index > -1) {
@@ -47,7 +105,8 @@ class TrafficNodeService {
 
   // Notify all subscribers
   private notifyListeners() {
-    this.listeners.forEach(callback => callback(this.currentNodes));
+    // Provide both nodes and trafficSegments to listeners
+    this.listeners.forEach(callback => callback(this.currentNodes, this.trafficSegments));
   }
 
   // Set road geometries for node generation
@@ -106,7 +165,8 @@ class TrafficNodeService {
         lat: p[0],
         lng: p[1],
         severity: severityType,
-        radius: areaRadius
+        radius: areaRadius,
+        video: this.videos[Math.floor(Math.random() * this.videos.length)]
       });
 
       placed++;
@@ -123,7 +183,7 @@ class TrafficNodeService {
 
   // Get nodes within a specific area
   getNodesInBounds(bounds: L.LatLngBounds): TrafficNode[] {
-    return this.currentNodes.filter(node => 
+    return this.currentNodes.filter(node =>
       bounds.contains(L.latLng(node.lat, node.lng))
     );
   }
@@ -139,7 +199,7 @@ class TrafficNodeService {
   // Start auto-refresh (2 minutes)
   startAutoRefresh() {
     if (this.refreshInterval) return;
-    
+
     this.refreshInterval = setInterval(() => {
       this.generateNodes();
     }, 120000); // 2 minutes
@@ -155,7 +215,80 @@ class TrafficNodeService {
 
   // Manual refresh
   refresh() {
-    this.generateNodes();
+    if (this.useLiveData) {
+      this.fetchLiveTrafficData();
+    } else {
+      this.generateNodes();
+    }
+  }
+
+  // Fetch live traffic data from TomTom API (Traffic Flow for Google Maps style)
+  async fetchLiveTrafficData() {
+    try {
+      // TomTom Traffic Flow API for Bhubaneswar bbox (minLon,minLat,maxLon,maxLat)
+      const bbox = '85.75,20.20,85.90,20.40'; // minLng,minLat,maxLng,maxLat
+      const zoom = 13; // Appropriate zoom level for city traffic
+      const apiUrl = `https://api.tomtom.com/traffic/services/4/flowSegmentData/relative0/10/json?key=${this.apiKey}&bbox=${bbox}&zoom=${zoom}`;
+
+      const response = await fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`TomTom Traffic Flow API request failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // Parse TomTom Traffic Flow response into traffic segments
+      const trafficSegments: TrafficSegment[] = [];
+
+      if (data.flowSegmentData && Array.isArray(data.flowSegmentData)) {
+        data.flowSegmentData.forEach((segment: TomTomFlowSegment, index: number) => {
+          if (segment.coordinates && segment.coordinates.coordinate) {
+            const coordinates: [number, number][] = segment.coordinates.coordinate.map((coord: [number, number]) => [coord[1], coord[0]]); // Convert [lng, lat] to [lat, lng]
+
+            // Calculate traffic severity based on speed ratio
+            const currentSpeed = segment.currentSpeed || 0;
+            const freeFlowSpeed = segment.freeFlowSpeed || 1;
+            const speedRatio = currentSpeed / freeFlowSpeed;
+
+            let severity: 'green' | 'yellow' | 'red' = 'green';
+            if (speedRatio < 0.3) {
+              severity = 'red'; // Heavy congestion
+            } else if (speedRatio < 0.7) {
+              severity = 'yellow'; // Moderate congestion
+            } else {
+              severity = 'green'; // Free flow
+            }
+
+            trafficSegments.push({
+              id: `flow_${index}`,
+              coordinates: coordinates,
+              severity: severity,
+              speedRatio: speedRatio,
+              currentSpeed: currentSpeed,
+              freeFlowSpeed: freeFlowSpeed
+            });
+          }
+        });
+      }
+
+      // Store traffic segments for rendering
+      this.trafficSegments = trafficSegments;
+      this.notifyListeners();
+    } catch (error) {
+      console.error('Failed to fetch live traffic flow data from TomTom:', error);
+      // Fallback to simulated data
+      this.generateNodes();
+    }
+  }
+
+  // Toggle between live and simulated data
+  setUseLiveData(useLive: boolean) {
+    this.useLiveData = useLive;
+    if (useLive) {
+      this.fetchLiveTrafficData();
+    } else {
+      this.generateNodes();
+    }
   }
 
   // Helper methods (same as TrafficMap)

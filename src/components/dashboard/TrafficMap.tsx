@@ -6,16 +6,25 @@ import { useToast } from '@/hooks/use-toast';
 import { useVideoState } from '@/hooks/useVideoState';
 import { RefreshCw, ZoomIn, ZoomOut, Plus, Minus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import TrafficNodeService from '@/lib/trafficNodeService';
+import TrafficNodeService, { TrafficSegment } from '@/lib/trafficNodeService';
 import { TrafficNotifications } from './TrafficNotifications';
 
+
+
 // Fix for default markers in leaflet
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+delete (L.Icon.Default.prototype as unknown as { _getIconUrl: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
+
+// Extend window interface for custom properties
+declare global {
+  interface Window {
+    handleControlSignals?: (lat: number, lng: number, locationName: string) => void;
+  }
+}
 
 // Create a custom icon to ensure it displays properly
 const createCustomIcon = () => {
@@ -41,6 +50,11 @@ interface TrafficNode {
 interface RoadGeometry {
   latlngs: [number, number][];
   lengthMeters: number;
+}
+
+interface GeometryPoint {
+  lat: number;
+  lon: number;
 }
 
 const videos = [
@@ -73,6 +87,7 @@ export function TrafficMap() {
   
   // Get traffic node service instance
   const trafficNodeService = TrafficNodeService.getInstance();
+  trafficNodeService.setUseLiveData(true);
 
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
@@ -99,7 +114,7 @@ export function TrafficMap() {
     map.createPane('roadsPane');
     map.getPane('roadsPane')!.style.zIndex = '450';
     map.getPane('roadsPane')!.style.pointerEvents = 'none';
-    map.getPane('roadsPane')!.style.opacity = '0';
+    map.getPane('roadsPane')!.style.opacity = '1';
 
     map.createPane('nodesPane');
     map.getPane('nodesPane')!.style.zIndex = '500';
@@ -110,6 +125,13 @@ export function TrafficMap() {
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    // Add TomTom real-time traffic flow tile layer
+    const tomtomTrafficLayer = L.tileLayer('https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.png?key=7iz930EexJTwLGnkJU130ArjvQWxOuyt', {
+      maxZoom: 19,
+      opacity: 0.6,
+      attribution: 'Traffic data © <a href="https://www.tomtom.com/">TomTom</a>'
     }).addTo(map);
 
     // Initialize layers
@@ -150,14 +172,7 @@ export function TrafficMap() {
       if (key === lastRoadsBboxKeyRef.current) return;
       lastRoadsBboxKeyRef.current = key;
 
-      const overpassQuery = `[
-        out:json
-        ][timeout:25];
-        (
-          way["highway"](${s},${w},${n},${e});
-        );
-        out geom;
-      `;
+      const overpassQuery = `[out:json][timeout:25];(way["highway"](${s},${w},${n},${e}););out geom;`;
 
       try {
         const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(overpassQuery.replace(/\n\s+/g, " "));
@@ -168,13 +183,11 @@ export function TrafficMap() {
         roadsLayerRef.current?.clearLayers();
         nodesLayerRef.current?.clearLayers();
         roadGeometriesRef.current = [];
-        
-        if (!data.elements) return;
 
+        if (!data.elements) return;
         for (const el of data.elements) {
           if (el.type === "way" && Array.isArray(el.geometry) && el.geometry.length > 1) {
-            const latlngs: [number, number][] = el.geometry.map((pt: any) => [pt.lat, pt.lon]);
-            
+            const latlngs: [number, number][] = el.geometry.map((pt: GeometryPoint) => [pt.lat, pt.lon]);
             // Calculate road length
             let lengthMeters = 0;
             for (let i = 0; i < latlngs.length - 1; i++) {
@@ -182,15 +195,13 @@ export function TrafficMap() {
               const b = L.latLng(latlngs[i+1][0], latlngs[i+1][1]);
               lengthMeters += a.distanceTo(b);
             }
-            
             roadGeometriesRef.current.push({ latlngs, lengthMeters });
-
             // Add road polyline (invisible)
             L.polyline(latlngs, {
               pane: 'roadsPane',
               color: '#222222',
               weight: getRoadWeight(),
-              opacity: 0.95,
+              opacity: 0,
               lineJoin: 'round',
               lineCap: 'round'
             }).addTo(roadsLayerRef.current!);
@@ -243,7 +254,7 @@ export function TrafficMap() {
       return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t] as [number, number];
     };
 
-    const randomSeverity = () => {
+    const randomSeverity = (): 'red' | 'yellow' => {
       const r = Math.random();
       if (r < 0.50) return 'red';
       return 'yellow';
@@ -466,7 +477,7 @@ export function TrafficMap() {
         .openPopup();
 
       // Set global function for button click
-      (window as any).handleControlSignals = handleControlSignals;
+      window.handleControlSignals = handleControlSignals;
 
       // Update popup with location info asynchronously
       reverseGeocode(lat, lng).then(place => {
@@ -503,14 +514,7 @@ export function TrafficMap() {
         if (key === lastRoadsBboxKeyRef.current) return;
         lastRoadsBboxKeyRef.current = key;
 
-        const overpassQuery = `[
-          out:json
-          ][timeout:25];
-          (
-            way["highway"](${s},${w},${n},${e});
-          );
-          out geom;
-        `;
+        const overpassQuery = `[out:json][timeout:25];(way["highway"](${s},${w},${n},${e}););out geom;`;
 
         try {
           const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(overpassQuery.replace(/\n\s+/g, " "));
@@ -520,13 +524,12 @@ export function TrafficMap() {
 
           roadsLayerRef.current?.clearLayers();
           roadGeometriesRef.current = [];
-          
-          if (!data.elements) return;
 
+          if (!data.elements) return;
           for (const el of data.elements) {
             if (el.type === "way" && Array.isArray(el.geometry) && el.geometry.length > 1) {
-              const latlngs: [number, number][] = el.geometry.map((pt: any) => [pt.lat, pt.lon]);
-              
+              const latlngs: [number, number][] = el.geometry.map((pt: GeometryPoint) => [pt.lat, pt.lon]);
+
               // Calculate road length
               let lengthMeters = 0;
               for (let i = 0; i < latlngs.length - 1; i++) {
@@ -534,7 +537,7 @@ export function TrafficMap() {
                 const b = L.latLng(latlngs[i+1][0], latlngs[i+1][1]);
                 lengthMeters += a.distanceTo(b);
               }
-              
+
               roadGeometriesRef.current.push({ latlngs, lengthMeters });
 
               // Add road polyline (invisible)
@@ -542,13 +545,12 @@ export function TrafficMap() {
                 pane: 'roadsPane',
                 color: '#222222',
                 weight: getRoadWeight(),
-                opacity: 0.95,
+                opacity: 0,
                 lineJoin: 'round',
                 lineCap: 'round'
               }).addTo(roadsLayerRef.current!);
             }
           }
-
           // Update service with new road geometries but don't regenerate nodes
           trafficNodeService.setRoadGeometries(roadGeometriesRef.current);
         } catch (err) {
@@ -563,37 +565,32 @@ export function TrafficMap() {
     map.on('dblclick', handleMapDoubleClick);
 
     // Subscribe to traffic node updates and render them
-    const displayTrafficNodes = (nodes: any[]) => {
-      if (!nodesLayerRef.current) return;
+    const displayTrafficNodes = (nodes: TrafficNode[], segments?: TrafficSegment[]) => {
+      if (!nodesLayerRef.current || !roadsLayerRef.current) return;
 
       nodesLayerRef.current.clearLayers();
       currentNodesRef.current = nodes;
 
-      nodes.forEach((node) => {
-        const color = node.severity === 'red' ? '#ef4444' : '#f59e0b';
+      // Render traffic segments as colored polylines on roadsPane
+      if (segments && segments.length > 0) {
+        segments.forEach((segment) => {
+          if (segment.coordinates && segment.coordinates.length > 1) {
+            const color = segment.severity === 'red' ? '#ef4444' :
+                         segment.severity === 'yellow' ? '#f59e0b' : '#10b981';
+            const weight = segment.severity === 'red' ? 4 :
+                          segment.severity === 'yellow' ? 3 : 2;
 
-        // Draw highlight area
-        L.circle([node.lat, node.lng], {
-          pane: 'nodesPane',
-          radius: node.radius,
-          color: color,
-          weight: 1,
-          opacity: 0.0,
-          fillColor: color,
-          fillOpacity: 0.35
-        }).addTo(nodesLayerRef.current!);
-
-        // Draw node marker
-        L.circleMarker([node.lat, node.lng], {
-          pane: 'nodesPane',
-          radius: 6,
-          color: color,
-          weight: 2,
-          opacity: 1.0,
-          fillColor: color,
-          fillOpacity: 0.8
-        }).addTo(nodesLayerRef.current!);
-      });
+            L.polyline(segment.coordinates, {
+              pane: 'roadsPane',
+              color: color,
+              weight: weight,
+              opacity: 0,
+              lineJoin: 'round',
+              lineCap: 'round'
+            }).addTo(roadsLayerRef.current!);
+          }
+        });
+      }
     };
 
     const unsubscribe = trafficNodeService.subscribe(displayTrafficNodes);
@@ -607,7 +604,7 @@ export function TrafficMap() {
         mapInstanceRef.current = null;
       }
     };
-  }, [toast]);
+  }, [toast, navigate, setVideos]);
 
   const handleRefresh = () => {
     if (!mapInstanceRef.current) return;
