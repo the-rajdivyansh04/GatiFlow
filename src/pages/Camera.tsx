@@ -199,6 +199,51 @@ const Camera = () => {
     };
   }, [selectedRegion, expandedCard]);
 
+  // Update circle and bounds when selectedRegion changes
+  useEffect(() => {
+    if (mapInstanceRef.current && circleRef.current && selectedRegion) {
+      circleRef.current.setLatLng([selectedRegion.lat, selectedRegion.lng]);
+      const bounds = circleRef.current.getBounds();
+      mapInstanceRef.current.fitBounds(bounds);
+      mapInstanceRef.current.setMaxBounds(bounds);
+    }
+  }, [selectedRegion]);
+
+  // Update circle, polygon bounds and mask when selectedRegion changes
+  useEffect(() => {
+    if (mapInstanceRef.current && circleRef.current && selectedRegion) {
+      circleRef.current.setLatLng([selectedRegion.lat, selectedRegion.lng]);
+      // @ts-expect-error getLatLngs method may not exist on Circle type in some Leaflet versions
+      const circleLatLngs = circleRef.current.getLatLngs ? circleRef.current.getLatLngs()[0] : [];
+      const polygonBounds = L.polygon(circleLatLngs).getBounds();
+      mapInstanceRef.current.fitBounds(polygonBounds);
+      mapInstanceRef.current.setMaxBounds(polygonBounds);
+
+      // Remove old mask if any
+      mapInstanceRef.current.eachLayer(layer => {
+        if (layer.options && (layer.options as { pane?: string }).pane === 'circlePane' && layer !== circleRef.current) {
+          mapInstanceRef.current?.removeLayer(layer);
+        }
+      });
+
+      // Add new mask overlay
+      const outerBounds = [
+        [90, -180],
+        [90, 180],
+        [-90, 180],
+        [-90, -180]
+      ];
+      const mask = L.polygon([outerBounds, circleLatLngs], {
+        color: '#000',
+        fillColor: '#000',
+        fillOpacity: 0.5,
+        stroke: false,
+        interactive: false,
+        pane: 'circlePane'
+      }).addTo(mapInstanceRef.current);
+    }
+  }, [selectedRegion]);
+
   const getRandomVideo = (excludeVideos: string[] = []): string => {
     const availableVideos = AVAILABLE_VIDEOS.filter(video => !excludeVideos.includes(video));
     if (availableVideos.length === 0) return AVAILABLE_VIDEOS[0]; // fallback
@@ -284,14 +329,9 @@ const Camera = () => {
       mapInstanceRef.current = null;
     }
 
-    const savedMapState = JSON.parse(localStorage.getItem('mapState') || '{}');
-
-    const mapCenter = savedMapState.center || L.latLng(selectedRegion.lat, selectedRegion.lng);
-    const mapZoom = savedMapState.zoom || 16;
-
     const map = L.map(mapRef.current, {
-      center: mapCenter,
-      zoom: mapZoom,
+      center: L.latLng(selectedRegion.lat, selectedRegion.lng),
+      zoom: 16,
       zoomControl: false,
       attributionControl: true,
       maxZoom: 17,
@@ -311,11 +351,17 @@ const Camera = () => {
       attribution: 'OpenStreetMap contributors'
     }).addTo(map);
 
+    // Add TomTom real-time traffic flow tile layer
+    const tomtomTrafficLayer = L.tileLayer('https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.png?key=7iz930EexJTwLGnkJU130ArjvQWxOuyt', {
+      maxZoom: 19,
+      opacity: 0.6,
+      attribution: 'Traffic data © <a href="https://www.tomtom.com/">TomTom</a>'
+    }).addTo(map);
+
     map.createPane('circlePane');
     map.getPane('circlePane')!.style.zIndex = '400';
-    map.createPane('nodesPane');
-    map.getPane('nodesPane')!.style.zIndex = '450';
 
+    // Create circle with 1km radius around selectedRegion
     circleRef.current = L.circle([selectedRegion.lat, selectedRegion.lng], {
       pane: 'circlePane',
       radius: 1000,
@@ -326,57 +372,38 @@ const Camera = () => {
       fillOpacity: 0.1
     }).addTo(map);
 
-    nodesLayerRef.current = L.layerGroup().addTo(map);
+    // Approximate circle as polygon for strict bounding
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const circleLatLngs = (circleRef.current as any).getLatLngs()[0];
+    const polygonBounds = L.polygon(circleLatLngs).getBounds();
+
+    map.fitBounds(polygonBounds);
+    map.setMaxBounds(polygonBounds);
+
+    // Add mask overlay to restrict map view outside polygon
+    const outerBounds = [
+      [90, -180],
+      [90, 180],
+      [-90, 180],
+      [-90, -180]
+    ];
+
+    const mask = L.polygon([outerBounds, circleLatLngs], {
+      color: '#000',
+      fillColor: '#000',
+      fillOpacity: 0.5,
+      stroke: false,
+      interactive: false,
+      pane: 'circlePane'
+    }).addTo(map);
+
     mapInstanceRef.current = map;
 
-    const trafficNodeService = TrafficNodeService.getInstance();
-    const serviceCenter = L.latLng(selectedRegion.lat, selectedRegion.lng);
-  
-    const displayTrafficNodes = (nodes: any[]) => {
-      if (!nodesLayerRef.current) return;
-      
-      nodesLayerRef.current.clearLayers();
-
-      nodes.forEach((node) => {
-        const color = node.severity === 'red' ? '#ef4444' : '#f59e0b';
-        
-        L.circle([node.lat, node.lng], {
-          pane: 'nodesPane',
-          radius: node.radius,
-          color: color,
-          weight: 1,
-          opacity: 0.0,
-          fillColor: color,
-          fillOpacity: 0.35
-        }).addTo(nodesLayerRef.current!);
-
-        L.circleMarker([node.lat, node.lng], {
-          pane: 'nodesPane',
-          radius: 6,
-          color: color,
-          weight: 2,
-          opacity: 1.0,
-          fillColor: color,
-          fillOpacity: 0.8
-        }).addTo(nodesLayerRef.current!);
-      });
-    };
-  
-    const unsubscribe = trafficNodeService.subscribe((nodes) => {
-      const nodesInRadius = trafficNodeService.getNodesInRadius(serviceCenter, 1000);
-      displayTrafficNodes(nodesInRadius);
-      setTrafficNodes(nodesInRadius);
-    });
-
     setTimeout(() => {
-      const currentNodes = trafficNodeService.getCurrentNodes();
-      const nodesInRadius = trafficNodeService.getNodesInRadius(serviceCenter, 1000);
-      displayTrafficNodes(nodesInRadius);
-      setTrafficNodes(nodesInRadius);
       map.invalidateSize();
     }, 300);
 
-    return unsubscribe;
+    return () => {};
   };
 
   const handleZoomIn = () => {
@@ -606,10 +633,10 @@ const Camera = () => {
               <CardContent className="pt-0 pb-3 flex-1 flex flex-col">
                 <div className="relative flex-1 bg-black rounded-md mb-3 overflow-hidden">
                   {cameraFeeds.find(f => f.id === 'camera1')?.currentVideo ? (
-                    <VideoPlayer 
-                      videoSrc={cameraFeeds.find(f => f.id === 'camera1')?.currentVideo!} 
-                      initialTime={videoTimeRef.current} 
-                      onTimeUpdate={(time) => { videoTimeRef.current = time; }} 
+                    <VideoPlayer
+                      videoSrc={cameraFeeds.find(f => f.id === 'camera1').currentVideo}
+                      initialTime={videoTimeRef.current}
+                      onTimeUpdate={(time) => { videoTimeRef.current = time; }}
                     />
                   ) : (
                     <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center text-white/30">
@@ -663,10 +690,10 @@ const Camera = () => {
               <CardContent className="pt-0 pb-3 flex-1 flex flex-col">
                 <div className="relative flex-1 bg-black rounded-md mb-3 overflow-hidden">
                   {cameraFeeds.find(f => f.id === 'camera2')?.currentVideo ? (
-                    <VideoPlayer 
-                      videoSrc={cameraFeeds.find(f => f.id === 'camera2')?.currentVideo!} 
-                      initialTime={videoTimeRef.current} 
-                      onTimeUpdate={(time) => { videoTimeRef.current = time; }} 
+                    <VideoPlayer
+                      videoSrc={cameraFeeds.find(f => f.id === 'camera2').currentVideo}
+                      initialTime={videoTimeRef.current}
+                      onTimeUpdate={(time) => { videoTimeRef.current = time; }}
                     />
                   ) : (
                     <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center text-white/30">
@@ -828,10 +855,10 @@ const Camera = () => {
           <div className="flex-1 p-6 pt-0">
             <div className="relative h-full bg-black rounded-md overflow-hidden">
               {cameraFeeds.find(f => f.id === expandedCard)?.currentVideo ? (
-                <VideoPlayer 
-                  videoSrc={cameraFeeds.find(f => f.id === expandedCard)?.currentVideo!} 
-                  initialTime={videoTimeRef.current} 
-                  onTimeUpdate={(time) => { videoTimeRef.current = time; }} 
+                <VideoPlayer
+                  videoSrc={cameraFeeds.find(f => f.id === expandedCard).currentVideo}
+                  initialTime={videoTimeRef.current}
+                  onTimeUpdate={(time) => { videoTimeRef.current = time; }}
                 />
               ) : (
                 <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center text-white/30">
