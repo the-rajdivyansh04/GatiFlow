@@ -84,6 +84,60 @@
 - **PostCSS** - CSS processing and optimization
 - **TypeScript Compiler** - Static type checking
 
+## 🌐 API Integration
+
+गतिFlow integrates with multiple external APIs to provide real-time traffic and weather data:
+
+### **Traffic APIs**
+
+#### **TomTom Traffic API**
+- **Traffic Flow API**: Real-time traffic flow data for Bhubaneswar region
+  - Endpoint: `https://api.tomtom.com/traffic/services/4/flowSegmentData/`
+  - Provides: Current speed, free flow speed, congestion levels
+  - Coverage: Bounding box `85.75,20.20,85.90,20.40` (Bhubaneswar)
+  
+- **Traffic Tile Layer**: Visual traffic overlay on maps
+  - Endpoint: `https://api.tomtom.com/traffic/map/4/tile/flow/relative/`
+  - Provides: Real-time traffic visualization with color-coded congestion
+  - Integration: Leaflet tile layer with 60% opacity
+
+#### **Overpass API (OpenStreetMap)**
+- **Road Network Data**: Fetches road geometries for traffic node placement
+  - Endpoint: `https://overpass-api.de/api/interpreter`
+  - Provides: Road network structure, highway data
+  - Used for: Intelligent traffic node generation
+
+### **Weather APIs**
+
+#### **OpenWeatherMap API**
+- **Current Weather**: Real-time weather data for Bhubaneswar
+  - Endpoint: `https://api.openweathermap.org/data/2.5/weather`
+  - Provides: Temperature, humidity, wind speed, conditions
+  
+- **Weather Layers**: Precipitation, clouds, and temperature overlays
+  - Endpoints: `https://tile.openweathermap.org/map/{layer}_new/`
+  - Layers: Precipitation, clouds, temperature
+
+#### **Open-Meteo API**
+- **Precipitation Forecast**: Hourly precipitation predictions
+  - Endpoint: `https://api.open-meteo.com/v1/forecast`
+  - Provides: Hourly precipitation data
+  - Used for: Weather-traffic impact analysis
+
+### **API Features**
+- ✅ **Real-time Data**: Live traffic flow and weather updates
+- ✅ **Auto-refresh**: Traffic data refreshes every 2 minutes
+- ✅ **Fallback Mode**: Simulated data when APIs are unavailable
+- ✅ **Toggle Support**: Switch between live and simulated data
+- ✅ **Error Handling**: Graceful degradation on API failures
+
+### **Configuration**
+API keys are configured in the codebase:
+- TomTom API: `src/lib/trafficNodeService.ts`
+- Weather APIs: `src/components/weather/WeatherMap.tsx`
+
+**Note**: For production deployment, move API keys to environment variables (`.env` file).
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -95,8 +149,8 @@
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/nanarigadi/pulse-route-prime.git
-   cd pulse-route-prime
+   git clone https://github.com/the-rajdivyansh04/GatiFlow.git
+   cd GatiFlow
    ```
 
 2. **Install dependencies**
