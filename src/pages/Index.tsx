@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { MapSection } from "@/components/dashboard/MapSection";
-import { AnalyticsPanel } from "@/components/dashboard/AnalyticsPanel";
+import { AnalyticsPanel, AnalyticsItem } from "@/components/dashboard/AnalyticsPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ResponsiveContainer,
@@ -83,16 +83,81 @@ function useRealisticLiveSeries(
 }
 
 const Index = () => {
-  // Realistic ranges and smooth step sizes
-  const commuteReductionSeries = useRealisticLiveSeries(4.5, 3.0, 6.0, 0.05); // Small steps
-  const co2ReductionSeries = useRealisticLiveSeries(100, 80, 120, 0.8); // Moderate steps for larger range
-  const fuelConsumptionSeries = useRealisticLiveSeries(4.7, 4.0, 5.5, 0.03); // Small steps
+  // Realistic ranges and smooth step sizes for bottom charts
+  const commuteReductionSeries = useRealisticLiveSeries(4.5, 3.0, 6.0, 0.05);
+  const co2ReductionSeries = useRealisticLiveSeries(100, 80, 120, 0.8);
+  const fuelConsumptionSeries = useRealisticLiveSeries(4.7, 4.0, 5.5, 0.03);
+
+  // State for real-time analytics data
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsItem[]>([
+    {
+      title: "Traffic Trends",
+      value: "+15%",
+      subtitle: "vs last week",
+      trend: "up",
+      color: "success",
+    },
+    {
+      title: "CO₂ Emission Savings",
+      value: "-8%",
+      subtitle: "this month",
+      trend: "down",
+      color: "success",
+    },
+    {
+      title: "Signal Efficiency",
+      value: "92%",
+      subtitle: "+5%",
+      trend: "up",
+      color: "info",
+    },
+    {
+      title: "Weather Impact",
+      value: "Moderate",
+      subtitle: "-3% flow",
+      trend: "down",
+      color: "warning",
+    },
+  ]);
+
+  useEffect(() => {
+    // WebSocket client connection to backend real-time analytics server
+    const ws = new WebSocket("ws://localhost:4000/analytics");
+
+    ws.onopen = () => {
+      console.log("WebSocket connected");
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        // Expecting data to be an array of analytics items matching AnalyticsItem interface
+        if (Array.isArray(data)) {
+          setAnalyticsData(data);
+        }
+      } catch (error) {
+        console.error("Error parsing WebSocket message:", error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error("WebSocket error:", error);
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket disconnected");
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, []);
 
   return (
     <div className="h-screen flex bg-background overflow-hidden">
       {/* Sidebar */}
       <Sidebar />
-      
+
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Row: Map and Analytics Panel - 2/3 height */}
@@ -103,13 +168,13 @@ const Index = () => {
               <MapSection />
             </div>
           </div>
-          
-          {/* Analytics Panel - Keep exactly as is */}
+
+          {/* Analytics Panel - Pass real-time analytics data */}
           <div className="flex-[1] w-80">
-            <AnalyticsPanel />
+            <AnalyticsPanel analyticsData={analyticsData} />
           </div>
         </div>
-        
+
         {/* Bottom Row: Three live trend graphs - 1/3 height */}
         <div className="flex-[1] p-4 pt-0">
           <div className="grid grid-cols-3 gap-4 h-full">

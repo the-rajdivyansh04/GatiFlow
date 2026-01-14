@@ -1,43 +1,20 @@
-import { TrendingUp, TrendingDown, Leaf, Zap, Cloud, AlertTriangle } from "lucide-react";
+import { TrendingUp, TrendingDown, Leaf, Zap, Cloud } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-const analyticsData = [
-  {
-    title: "Traffic Trends",
-    value: "+15%",
-    subtitle: "vs last week",
-    icon: TrendingUp,
-    trend: "up",
-    color: "success"
-  },
-  {
-    title: "CO₂ Emission Savings",
-    value: "-8%",
-    subtitle: "this month",
-    icon: Leaf,
-    trend: "down",
-    color: "success"
-  },
-  {
-    title: "Signal Efficiency",
-    value: "92%",
-    subtitle: "+5%",
-    icon: Zap,
-    trend: "up",
-    color: "info"
-  },
-  {
-    title: "Weather Impact",
-    value: "Moderate",
-    subtitle: "-3% flow",
-    icon: Cloud,
-    trend: "down",
-    color: "warning"
-  }
-];
+export interface AnalyticsItem {
+  title: string;
+  value: string;
+  subtitle: string;
+  trend: "up" | "down" | "stable";
+  color: "success" | "warning" | "info" | "default";
+}
 
-export function AnalyticsPanel() {
+interface AnalyticsPanelProps {
+  analyticsData: AnalyticsItem[];
+}
+
+export function AnalyticsPanel({ analyticsData }: AnalyticsPanelProps) {
   return (
     <div className="w-72 p-3 h-full flex flex-col">
       {/* Header */}
@@ -51,7 +28,16 @@ export function AnalyticsPanel() {
       {/* Equal-height cards filling available space */}
       <div className="grid grid-rows-4 gap-3 flex-1">
         {analyticsData.map((item, index) => {
-          const Icon = item.icon;
+          const Icon =
+            item.title === "Traffic Trends"
+              ? TrendingUp
+              : item.title === "CO₂ Emission Savings"
+              ? Leaf
+              : item.title === "Signal Efficiency"
+              ? Zap
+              : item.title === "Weather Impact"
+              ? Cloud
+              : null;
 
           return (
             <Card
@@ -61,17 +47,19 @@ export function AnalyticsPanel() {
               <CardHeader className="py-2 px-3">
                 <CardTitle className="flex items-center justify-between text-[13px] font-medium">
                   <span className="text-muted-foreground">{item.title}</span>
-                  <Icon
-                    className={`h-4 w-4 ${
-                      item.color === "success"
-                        ? "text-success"
-                        : item.color === "warning"
-                        ? "text-warning"
-                        : item.color === "info"
-                        ? "text-info"
-                        : "text-muted-foreground"
-                    }`}
-                  />
+                  {Icon && (
+                    <Icon
+                      className={`h-4 w-4 ${
+                        item.color === "success"
+                          ? "text-success"
+                          : item.color === "warning"
+                          ? "text-warning"
+                          : item.color === "info"
+                          ? "text-info"
+                          : "text-muted-foreground"
+                      }`}
+                    />
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-0 px-3 pb-3 flex-1 flex flex-col justify-end">
